@@ -1,0 +1,368 @@
+#pip install rake-nltk
+#pip install wordcloud
+#pip install yake
+#pip install -U spacy
+#pip install textacy
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+import re
+import shutil
+import string
+import tensorflow as tf
+import collections
+
+from tensorflow.keras import layers
+from tensorflow.keras import losses
+
+import nltk
+nltk.download('stopwords')
+nltk.download('punkt')
+
+from rake_nltk import Rake 
+from wordcloud import WordCloud 
+import matplotlib.pyplot as plt 
+import yake 
+import spacy.cli
+#import textacy.ke 
+import textacy 
+from textacy import *
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
+import nltk
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from scipy import stats
+from collections import Counter
+
+
+# UPLOAD DATA HERE, DATA REDACTED FOR PRIVACY REASONS. 
+df = pd.read_excel
+
+
+# Initialize Rake outside the loop
+#rake = Rake()
+
+# Assuming df is your DataFrame with a column 'UserMessage'
+#for i, row in df.iterrows():
+#    message_text = df.at[i, 'UserMessage']
+#    
+#    # Extract keywords from the message_text
+#    rake.extract_keywords_from_text(message_text)
+#    keywords = rake.get_ranked_phrases()
+#    
+#    # Store keywords in the 'Keywords' column as a comma-separated string
+#    df.at[i, 'KeywordsRAKE'] = ', '.join(keywords)
+#
+##print(df['KeywordsRAKE'])
+
+
+
+# Initialize Yake outside the loop
+yake_kw = yake.KeywordExtractor() 
+
+# Assuming df_10 is your DataFrame with a column 'UserMessage'
+for i, row in df.iterrows():
+    message_text = str(df.at[i, 'UserMessage'])
+    
+    # Extract keywords from the message_text
+    KeyWords = yake_kw.extract_keywords(message_text) 
+  
+    # Displaying the keywords 
+    #print(KeyWords) 
+  
+    # Extracting keywords 
+    keywordsyake = [kw for kw, _ in KeyWords]
+    
+    
+    # Store keywords in the 'Keywords' column as a comma-separated string
+    df.at[i, 'KeywordsYAKE'] = ', '.join(keywordsyake)
+
+print(df['KeywordsYAKE'])
+
+
+
+# Function to split KeywordsYAKE into separate keywords and create new rows
+def expand_keywords(df):
+    # Create a copy of the original DataFrame
+    expanded_df = df.copy()
+    # Split KeywordsYAKE into separate keywords
+    expanded_df['KeywordsYAKE'] = expanded_df['KeywordsYAKE'].str.split(', ')
+    # Explode the DataFrame to create new rows for each keyword
+    expanded_df = expanded_df.explode('KeywordsYAKE').reset_index(drop=True)
+    return expanded_df
+
+expanded_df = expand_keywords(df)
+
+print("\nExpanded DataFrame:")
+print(expanded_df)
+
+df = df.applymap(lambda x: x.lower() if isinstance(x, str) else x)
+
+
+df_filtered = df[['PluginName', 'Manager Name', 'Office Location', 'Job Title', 'Job Family', 'ServiceTimeAtMessage', 'UserMessageLength', 'KeywordsYAKE']]
+#df_filtered
+df_filtered2 = df[[ 'Job Family', 'ServiceTimeAtMessage', 'KeywordsYAKE']]
+df_filtered2
+
+# Function to split KeywordsYAKE into separate keywords and create new rows
+def expand_keywords(df):
+    # Create a copy of the original DataFrame
+    expanded_df = df.copy()
+    # Split KeywordsYAKE into separate keywords
+    expanded_df['KeywordsYAKE'] = expanded_df['KeywordsYAKE'].str.split(', ')
+    # Explode the DataFrame to create new rows for each keyword
+    expanded_df = expanded_df.explode('KeywordsYAKE').reset_index(drop=True)
+    return expanded_df
+
+expanded_df = expand_keywords(df_filtered2)
+
+print("\nExpanded DataFrame:")
+print(expanded_df)
+
+
+## Tenure_Bucket for Categorization Purposes
+
+# Define the bins and labels for categorization
+bins = [0, 3*30, 6*30, 12*30, 24*30, 72*30, float('inf')]
+labels = ['3 months or less', '6 months or less', '12 months or less', '24 months or less', '72 months or less', 'greater than 72 months']
+
+# Apply pd.cut() to create the categorization
+
+expanded_df['Tenure_Bucket'] = pd.cut(expanded_df['ServiceTimeAtMessage'], bins=bins, labels=labels, right=False)
+expanded_df['KeywordsYAKE'] = expanded_df['KeywordsYAKE'].str.lower()
+# Display the updated DataFrame with the new column
+print(expanded_df)# Get unique values of 'Tenure_Bucket'
+unique_tenure_buckets = expanded_df['Tenure_Bucket'].unique()
+
+# Assuming expanded_df is defined earlier and contains 'Tenure_Bucket' column
+
+# Get unique values of 'Tenure_Bucket'
+unique_tenure_buckets = expanded_df['Tenure_Bucket'].unique()
+
+# Dictionary to store DataFrames for each unique 'Tenure_Bucket'
+bucket_dfs = {}
+
+# Create separate DataFrames for each unique 'Tenure_Bucket'
+for bucket in unique_tenure_buckets:
+    bucket_dfs[bucket] = expanded_df[expanded_df['Tenure_Bucket'] == bucket].copy()
+
+# Example of accessing one of the DataFrames (e.g., for the first unique 'Tenure_Bucket')
+first_bucket_df = bucket_dfs[unique_tenure_buckets[0]]
+
+# Print number of rows for each bucket (optional)
+for bucket, df in bucket_dfs.items():
+    print(f"Tenure Bucket: {bucket}, Number of rows: {len(df)}")
+
+
+
+## Predict Job Family by Keywords and Tenure Bucket : Small Scale
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from sklearn.pipeline import Pipeline
+
+# Assuming expanded_df is defined earlier and contains 'Tenure_Bucket', 'KeywordsYAKE', and 'Job Family' columns
+
+# Ensure 'Tenure_Bucket' is converted to string to avoid float issues
+expanded_df['Tenure_Bucket'] = expanded_df['Tenure_Bucket'].astype(str)
+
+# Get unique values of 'Tenure_Bucket'
+unique_tenure_buckets = expanded_df['Tenure_Bucket'].unique()
+
+# List to store results for each bucket
+results = []
+
+# Iterate through each dynamically created DataFrame
+for bucket in unique_tenure_buckets:
+    df_name = f"df_{bucket.replace(' ', '_')}"
+    df = globals()[df_name]  # Access the DataFrame
+    
+    # Apply the code snippet to each DataFrame
+    # Assuming expanded_filtered_df and necessary imports are defined earlier
+    df= df.sample(frac=0.10, random_state=42)
+    # Drop rows with NaN values
+    df.dropna(inplace=True)
+    
+    # Selecting relevant features and target variable
+    X = df[['KeywordsYAKE', 'Tenure_Bucket']]  # Include relevant columns
+    y = df['Job Family']  # Target variable
+    
+    # Define categorical columns
+    categorical_cols = ['KeywordsYAKE', 'Tenure_Bucket']
+    
+    # Preprocessing steps
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', categorical_transformer, categorical_cols)
+        ])
+    
+    # Classifier
+    clf = RandomForestClassifier(random_state=42)
+    
+    # Create a pipeline
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', clf)])
+    
+    # Split data into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Fit the model
+    pipeline.fit(X_train, y_train)
+    
+    # Predictions
+    y_pred = pipeline.predict(X_test)
+    
+    # Evaluation
+    report = classification_report(y_test, y_pred)
+
+    # Print current bucket and classification report
+    print(f"Bucket: {bucket}")
+    print(report)
+    print("-----------------------------")
+    
+
+
+## Take out the minority sampled job categories categories to improve accuracy?
+# Ensure 'Tenure_Bucket' is converted to string to avoid float issues
+filtered_df['Tenure_Bucket'] = filtered_df['Tenure_Bucket'].astype(str)
+
+# Get unique values of 'Tenure_Bucket'
+unique_tenure_buckets = filtered_df['Tenure_Bucket'].unique()
+
+# List to store results for each bucket
+results = []
+
+# Iterate through each dynamically created DataFrame
+for bucket in unique_tenure_buckets:
+    df_name = f"df_{bucket.replace(' ', '_')}"
+    df = globals()[df_name]  # Access the DataFrame
+
+
+    # Ensure df is the filtered DataFrame
+    df = filtered_df[filtered_df['Tenure_Bucket'] == bucket]  # Filter by current bucket
+
+    
+    # Apply the code snippet to each DataFrame
+    # Assuming expanded_filtered_df and necessary imports are defined earlier
+    df= df.sample(frac=0.30, random_state=42)
+    # Drop rows with NaN values
+    df.dropna(inplace=True)
+    
+    # Selecting relevant features and target variable
+    X = df[['KeywordsYAKE', 'Tenure_Bucket']]  # Include relevant columns
+    y = df['.Job Family']  # Target variable
+    
+    # Define categorical columns
+    categorical_cols = ['KeywordsYAKE', 'Tenure_Bucket']
+    
+    # Preprocessing steps
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', categorical_transformer, categorical_cols)
+        ])
+    
+    # Classifier
+    clf = RandomForestClassifier(random_state=42)
+    
+    # Create a pipeline
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                               ('classifier', clf)])
+    
+    # Split data into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Fit the model
+    pipeline.fit(X_train, y_train)
+    
+    # Predictions
+    y_pred = pipeline.predict(X_test)
+    
+    # Evaluation
+    report = classification_report(y_test, y_pred)
+
+    # Print current bucket and classification report
+    print(f"Bucket: {bucket}")
+    print(report)
+    print("-----------------------------")
+    
+
+## Predicting keywords
+
+# Filter expanded_df based on keywords_gt_10
+df_keywords_10 = expanded_df[expanded_df['KeywordsYAKE'].isin(keywords_gt_10)]
+df_keywords_10
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# Function to get top n keywords and their importance 
+def get_top_features(classifier, vectorizer, n=10):
+    feature_names = vectorizer.get_feature_names_out()
+    top_features = []
+    feature_importance = []
+    # For each class (job family), get the top n features (keywords) and their importance
+    for class_idx, class_label in enumerate(classifier.classes_):
+        top = np.argsort(classifier.feature_importances_)[-n:][::-1]
+        top_features.append([feature_names[i] for i in top])
+        feature_importance.append(classifier.feature_importances_[top])
+    
+    return top_features, feature_importance
+
+# keywords occurring more than 10 times
+df_keywords_10['Tenure_Bucket'] = df_keywords_10['Tenure_Bucket'].astype(str)
+unique_tenure_buckets = df_keywords_10['Tenure_Bucket'].unique()
+
+for bucket in unique_tenure_buckets:
+    df_name = f"df_{bucket.replace(' ', '_')}"
+    df = globals()[df_name]  # Access the DataFrame
+    df = df.sample(frac=0.5, random_state=22)
+    df.dropna(inplace=True) 
+    X = df[['KeywordsYAKE', 'Tenure_Bucket']]  
+    y = df['Job Family']  
+    
+    # Preprocessing: One-hot encoding for categorical columns
+    categorical_cols = ['KeywordsYAKE', 'Tenure_Bucket']
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', categorical_transformer, categorical_cols)])
+    
+    # Classifier: RandomForestClassifier
+    clf = RandomForestClassifier(random_state=42)
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', clf)])
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    pipeline.fit(X_train, y_train)
+    # Predict probabilities for each class
+    y_pred_proba = pipeline.predict_proba(X_test)
+    # feature names from the vectorizer
+    vectorizer = pipeline.named_steps['preprocessor'].transformers_[0][1]  
+    # Get top 10 keywords and their importance (confidence) for each job family
+    top_keywords, feature_importance = get_top_features(pipeline.named_steps['classifier'], vectorizer, n=10)
+    print(f"Bucket: {bucket}")
+    
+    #for i, job_family in enumerate(pipeline.named_steps['classifier'].classes_):
+    print(f"(Bucket: {bucket})")  # Bucket
+    for j in range(10):  # top 10 keywords and their importance
+        print(f"Top Keyword {j+1}: {top_keywords[i][j]} | Feature Importance: {feature_importance[i][j]}")
+    print("-----------------------------")
+
+
+
+
+
+
+
+
