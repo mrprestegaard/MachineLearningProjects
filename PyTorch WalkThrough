@@ -1,0 +1,111 @@
+Using PyTorch Deep Learning
+
+# encode cat features --> all but LemmatizedKeywords
+label_encoders = {}
+for col in ['Sheet1.Job Title', 'Sheet1.Job Family', 'Sheet1.Manager Name', 'Tenure_Bucket']:
+    le = LabelEncoder()
+    dfc[col] = le.fit_transform(dfc[col])
+    label_encoders[col] = le
+
+dfc
+
+#prepare labels
+label_tokenizer = Tokenizer()
+label_tokenizer.fit_on_texts(dfc['LemmatizedKeywords'])
+labels = label_tokenizer.texts_to_sequences(dfc['LemmatizedKeywords'])
+labels_padded = pad_sequences(labels, maxlen=10)
+
+#split labels
+X = dfc[['Sheet1.Job Title', 'Sheet1.Job Family', 'Sheet1.Manager Name', 'Tenure_Bucket']].values
+y = labels_padded
+print('The shape of "LemmatizedKeywords":', y.shape)
+print('The shape of X:', X.shape)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state= 42)
+#convert to tensors
+X_train = torch.tensor(X_train, dtype=torch.long)
+X_test =  torch.tensor(X_test,  dtype=torch.long)
+y_train = torch.tensor(y_train, dtype=torch.long)
+y_test =  torch.tensor(y_test, dtype=torch.long)
+
+#define a custom dataset
+class JobDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+    def __len__(self):
+        return len(self.X)
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+train_dataset = JobDataset(X_train, y_train)
+test_dataset = JobDataset(X_test, y_test)
+train_loader = DataLoader(train_dataset, batch_size = 32, shuffle = False)     # Off by a factor of 10. 
+test_loader = DataLoader(test_dataset, batch_size = 32, shuffle = False)       # Off by a factor of 10. 
+
+
+#define the nueral network model 
+class KeywordModel(nn.Module):
+    def __init__(self, num_job_titles, num_job_families, num_managers, num_tenures, output_size):
+        super(KeywordModel, self).__init__()
+        self.jobtitle_embed = nn.Embedding(num_job_titles, 10)
+        self.jobfamily_embed = nn.Embedding(num_job_families, 10)
+        self.manager_embed = nn.Embedding(num_managers, 10)
+        self.tenure_embed = nn.Embedding(num_tenures, 10)
+
+        self.fc1 = nn.Linear(40, 128) # 4 * 100 = 400 after concatenation of the above
+        self.fc2 = nn.Linear(128, output_size)
+        
+    def forward(self, x):
+        jobtitle = self.jobtitle_embed(x[:, 0])
+        jobfamily = self.jobfamily_embed(x[:, 1])
+        manager = self.manager_embed(x[:, 2])
+        tenure = self.tenure_embed(x[:, 3])
+
+        x = torch.cat((jobtitle, jobfamily, manager, tenure), dim= 1)
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+# initialize the model 
+model = KeywordModel(
+    num_job_titles= len(label_encoders['Sheet1.Job Title'].classes_),
+    num_job_families= len(label_encoders['Sheet1.Job Family'].classes_),
+    num_managers= len(label_encoders['Sheet1.Manager Name'].classes_),
+    num_tenures= len(label_encoders['Tenure_Bucket'].classes_),
+    output_size=y_train.shape[1]
+)
+#'Sheet1.Job Title', 'Sheet1.Job Family', 'Sheet1.Manager Name', 'Tenure_Bucket']
+#define loss and optimizer
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+#Training Loop
+num_epochs = 10
+for epoch in range(num_epochs):
+    model.train()
+    for X_batch, y_batch in train_loader:
+        #, y_batch
+        optimizer.zero_grad()
+        outputs = model(X_batch)
+
+        outputs = outputs.view(-1, outputs.size(-1))
+        y_batch = y_batch.view(-1)
+        
+        loss = criterion(outputs, y_batch)
+        loss.backward()
+        optimizer.step()
+
+    print(f'Epoch[{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+# evaluation
+model.eval()
+correct = 0
+total = 0
+with torch.no_grad():
+    for X_batch, y_batch in test_loader:
+        outputs= model(X_batch)
+        _, predicted = torch.max(outputs.data, 1)
+        total += y_batch.size(0)
+        correct+=(predicted ==y_batch).sum().item()
+print(f'Test Accuracy: {100*correct / total:.2f}%')
